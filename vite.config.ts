@@ -12,32 +12,13 @@ export default defineConfig(({mode}) => {
     },
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, 'src'),
-        '@components': path.resolve(__dirname, 'src/components'),
-        '@pages': path.resolve(__dirname, 'src/pages'),
-        '@utils': path.resolve(__dirname, 'src/utils'),
-        '@hooks': path.resolve(__dirname, 'src/hooks'),
-        '@types': path.resolve(__dirname, 'src/types'),
-      },
-    },
-    build: {
-      target: 'esnext',
-      minify: 'terser',
-      reportCompressedSize: false,
-      chunkSizeWarningLimit: 1000,
-      rollupOptions: {
-        output: {
-          manualChunks: {
-            'vendor': ['react', 'react-dom', 'react-router-dom'],
-            'firebase': ['firebase'],
-            'ui': ['lucide-react', 'motion', 'recharts'],
-          },
-        },
+        '@': path.resolve(__dirname, '.'),
       },
     },
     server: {
+      // HMR is disabled in AI Studio via DISABLE_HMR env var.
+      // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
-      port: 5173,
     },
   };
 });

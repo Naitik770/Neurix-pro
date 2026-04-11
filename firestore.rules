@@ -1,0 +1,111 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        ("email" in request.auth.token) &&
+        (request.auth.token.email == "prajapatinaitik2435@gmail.com") &&
+        ("email_verified" in request.auth.token) &&
+        (request.auth.token.email_verified == true);
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && (request.auth.uid == userId || isAdmin());
+    }
+
+    // Domain Validators
+    function isValidUser(data) {
+      return data.uid is string && data.name is string;
+    }
+
+    function isValidUsername(data) {
+      return data.uid is string;
+    }
+
+    // Collection Rules
+    match /usernames/{username} {
+      allow read: if true;
+      allow create: if isAuthenticated() && request.resource.data.uid == request.auth.uid && !exists(/databases/$(database)/documents/usernames/$(username));
+      allow update: if isAuthenticated() && resource.data.uid == request.auth.uid && request.resource.data.uid == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.uid == request.auth.uid;
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.uid == request.auth.uid;
+      allow update: if isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.uid == resource.data.uid;
+      allow delete: if isAdmin();
+
+      // Allow others to send friend requests and notifications
+      match /friendRequests/{requestId} {
+        allow read: if isOwner(userId) || (isAuthenticated() && requestId == request.auth.uid);
+        allow create: if (isOwner(userId) || (isAuthenticated() && requestId == request.auth.uid)) && request.resource.data.fromUid == request.auth.uid;
+        allow update, delete: if isOwner(userId) || (isAuthenticated() && requestId == request.auth.uid);
+      }
+      
+      match /friends/{friendId} {
+        allow read: if isOwner(userId) || (isAuthenticated() && friendId == request.auth.uid);
+        allow create: if (isOwner(userId) || (isAuthenticated() && friendId == request.auth.uid)) && request.resource.data.friendUid == friendId;
+        allow update, delete: if isOwner(userId) || (isAuthenticated() && friendId == request.auth.uid);
+      }
+      
+      match /notifications/{notificationId} {
+        allow read: if isOwner(userId);
+        allow create: if isAuthenticated() && request.resource.data.relatedUid == request.auth.uid; 
+        allow update, delete: if isOwner(userId);
+      }
+
+      match /reminders/{reminderId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /habits/{habitId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /habitCompletions/{completionId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /gameSessions/{sessionId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /chatSessions/{sessionId} {
+        allow read, write: if isOwner(userId);
+        
+        match /messages/{messageId} {
+          allow read, write: if isOwner(userId);
+        }
+      }
+    }
+
+    match /publicProfiles/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isOwner(userId) && request.resource.data.uid == request.auth.uid;
+      allow update: if isOwner(userId) && request.resource.data.uid == resource.data.uid;
+      allow delete: if isAdmin();
+    }
+
+    match /pendingProfiles/{userId} {
+      allow read, delete: if isOwner(userId);
+      allow create: if isOwner(userId) && request.resource.data.uid == request.auth.uid;
+      allow update: if isOwner(userId) && request.resource.data.uid == resource.data.uid;
+    }
+
+    match /chats/{chatId} {
+      allow read, write: if isAuthenticated() && (chatId.split('_')[0] == request.auth.uid || chatId.split('_')[1] == request.auth.uid);
+      
+      match /messages/{messageId} {
+        allow read: if isAuthenticated() && (chatId.split('_')[0] == request.auth.uid || chatId.split('_')[1] == request.auth.uid);
+        allow create: if isAuthenticated() && (chatId.split('_')[0] == request.auth.uid || chatId.split('_')[1] == request.auth.uid) && request.resource.data.senderId == request.auth.uid;
+        allow update, delete: if isAuthenticated() && resource.data.senderId == request.auth.uid;
+      }
+    }
+  }
+}
