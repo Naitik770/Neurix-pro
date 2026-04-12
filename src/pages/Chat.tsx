@@ -10,7 +10,7 @@ import { toast } from 'sonner';
 
 export default function Chat() {
   const { friendId } = useParams<{ friendId: string }>();
-  const { user } = useAuth();
+  const { user, isPro } = useAuth();
   const navigate = useNavigate();
 
   const [friendProfile, setFriendProfile] = useState<any>(null);
@@ -142,8 +142,9 @@ export default function Chat() {
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 800 * 1024) {
-      toast.error("File size must be under 800KB.");
+    const maxSize = isPro ? 100 * 1024 * 1024 : 5 * 1024 * 1024;
+    if (file.size > maxSize) {
+      toast.error(`File size must be under ${isPro ? '100MB' : '5MB'}${isPro ? '' : ' (upgrade to Pro for larger uploads)'}.`);
       return;
     }
     const reader = new FileReader();

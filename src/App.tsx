@@ -1,7 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import React, { useEffect, useState, createContext, useContext } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { doc, getDoc, setDoc, deleteDoc, serverTimestamp, collection, query, onSnapshot, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, deleteDoc, serverTimestamp, collection, query, onSnapshot, updateDoc, increment } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { BottomNav } from './components/BottomNav';
@@ -27,6 +27,9 @@ import Personalization from './pages/Personalization';
 import ChatHistory from './pages/ChatHistory';
 import CreateUsername from './pages/CreateUsername';
 import VerifyEmail from './pages/VerifyEmail';
+import Landing from './pages/Landing';
+import Pricing from './pages/Pricing';
+import Billing from './pages/Billing';
 
 interface AuthContextType {
   user: User | null;
@@ -35,6 +38,10 @@ interface AuthContextType {
   theme: string;
   setTheme: (theme: string) => void;
   checkVerification: () => Promise<void>;
+  isPro: boolean;
+  remainingDays: number;
+  incrementAiUsage: () => Promise<void>;
+  canUseAi: boolean;
 }
 
 const AuthContext = createContext<AuthContextType>({ 
@@ -43,7 +50,11 @@ const AuthContext = createContext<AuthContextType>({
   profile: null, 
   theme: 'light', 
   setTheme: () => {},
-  checkVerification: async () => {}
+  checkVerification: async () => {},
+  isPro: false,
+  remainingDays: 0,
+  incrementAiUsage: async () => {},
+  canUseAi: true
 });
 
 export const useAuth = () => useContext(AuthContext);
@@ -62,6 +73,9 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [reminders, setReminders] = useState<any[]>([]);
   const [theme, setTheme] = useState(localStorage.getItem('appTheme') || 'light');
+  const [isPro, setIsPro] = useState(false);
+  const [remainingDays, setRemainingDays] = useState(0);
+  const [canUseAi, setCanUseAi] = useState(true);
 
   useEffect(() => {
     if (theme === 'dark') {
@@ -88,7 +102,9 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
         // Use onSnapshot for real-time profile updates
         unsubscribeProfile = onSnapshot(userRef, async (docSnap) => {
           if (docSnap.exists()) {
-            setProfile(docSnap.data());
+            const profileData = docSnap.data();
+            setProfile(profileData);
+            syncSubscriptionState(profileData, firebaseUser.uid);
             setLoading(false);
           } else {
             setProfile(null);
@@ -120,6 +136,55 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
       await auth.currentUser.getIdToken(true); // Force token refresh
       setUser({ ...auth.currentUser });
     }
+  };
+
+  const syncSubscriptionState = async (incomingProfile: any, uid?: string) => {
+    if (!incomingProfile) return;
+    const now = new Date();
+    const plan = incomingProfile.plan || 'FREE';
+    const expiryDate = incomingProfile.expiryDate?.toDate?.() || (incomingProfile.expiryDate ? new Date(incomingProfile.expiryDate) : null);
+    const todayKey = new Date().toISOString().slice(0, 10);
+    const usageDate = typeof incomingProfile.aiUsageDate === 'string' ? incomingProfile.aiUsageDate : '';
+    const aiUsageCount = usageDate === todayKey ? (incomingProfile.aiUsageCount || 0) : 0;
+    const proIsActive = plan === 'PRO' && Boolean(expiryDate && expiryDate > now);
+
+    if (plan === 'PRO' && expiryDate && expiryDate <= now && uid) {
+      await updateDoc(doc(db, 'users', uid), {
+        plan: 'FREE',
+        expiryDate: null,
+        updatedAt: serverTimestamp()
+      }).catch((error) => handleFirestoreError(error, OperationType.UPDATE, `users/${uid}`));
+      setIsPro(false);
+      setRemainingDays(0);
+      setCanUseAi(true);
+      return;
+    }
+
+    setIsPro(proIsActive);
+    if (proIsActive && expiryDate) {
+      const diffDays = Math.ceil((expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+      setRemainingDays(Math.max(diffDays, 0));
+    } else {
+      setRemainingDays(0);
+    }
+    setCanUseAi(proIsActive || aiUsageCount < 10);
+  };
+
+  const incrementAiUsage = async () => {
+    if (!user) return;
+    const todayKey = new Date().toISOString().slice(0, 10);
+    const userRef = doc(db, 'users', user.uid);
+    const fresh = await getDoc(userRef);
+    const data = fresh.data() || {};
+    if (data.aiUsageDate !== todayKey) {
+      await updateDoc(userRef, {
+        aiUsageDate: todayKey,
+        aiUsageCount: 1,
+        updatedAt: serverTimestamp()
+      });
+      return;
+    }
+    await updateDoc(userRef, { aiUsageCount: increment(1), updatedAt: serverTimestamp() });
   };
 
   // Profile creation logic
@@ -158,6 +223,9 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
           streak: 0,
           lifeScore: 50,
           role: 'user',
+          plan: 'FREE',
+          aiUsageCount: 0,
+          aiUsageDate: new Date().toISOString().slice(0, 10),
           createdAt: serverTimestamp(),
         };
         if (email) {
@@ -208,6 +276,12 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
 
     createProfileIfMissing();
   }, [user, user?.emailVerified, profile]);
+
+  useEffect(() => {
+    if (profile && user) {
+      syncSubscriptionState(profile, user.uid);
+    }
+  }, [profile, user]);
 
   // Global Presence Logic
   useEffect(() => {
@@ -417,7 +491,7 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [user, reminders]);
 
   return (
-    <AuthContext.Provider value={{ user, loading, profile, theme, setTheme, checkVerification }}>
+    <AuthContext.Provider value={{ user, loading, profile, theme, setTheme, checkVerification, isPro, remainingDays, incrementAiUsage, canUseAi }}>
       {children}
       <Toaster position="top-center" richColors closeButton />
     </AuthContext.Provider>
@@ -447,7 +521,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   }
 
   if (hasUsername && location.pathname === '/create-username') {
-    return <Navigate to="/" />;
+    return <Navigate to="/app" />;
   }
 
   // Check if profile is complete (e.g., has age set)
@@ -458,7 +532,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   }
 
   if (isProfileComplete && location.pathname === '/personalization') {
-    return <Navigate to="/" />;
+    return <Navigate to="/app" />;
   }
 
   return <>{children}</>;
@@ -466,16 +540,29 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
+  const { isPro, remainingDays } = useAuth();
   const isChatPage = location.pathname.startsWith('/chat/');
 
   return (
     <div className={`${isChatPage ? 'h-screen overflow-hidden' : 'min-h-screen'} bg-[#FDFBF7] dark:bg-gray-900 ${isChatPage ? '' : 'pb-24'} font-sans text-gray-900 dark:text-gray-100 transition-colors duration-300 relative`}>
       <div className={`relative z-10 ${isChatPage ? 'h-full' : ''}`}>
+        {!isChatPage && (
+          <div className="fixed top-4 right-4 z-40 px-3 py-1.5 rounded-full bg-black/65 text-white text-xs border border-white/20 backdrop-blur">
+            {isPro ? `PRO • ${remainingDays}d left` : 'FREE'}
+          </div>
+        )}
         {children}
       </div>
       {!isChatPage && <BottomNav />}
     </div>
   );
+}
+
+function HomeEntry() {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="flex h-screen items-center justify-center bg-[#FDFBF7] dark:bg-gray-900">Loading...</div>;
+  if (!user) return <Landing />;
+  return <Navigate to="/app" replace />;
 }
 
 export default function App() {
@@ -484,13 +571,16 @@ export default function App() {
       <AuthProvider>
         <BrowserRouter>
           <Routes>
+            <Route path="/" element={<HomeEntry />} />
             <Route path="/login" element={<Login />} />
             <Route path="/signup" element={<SignUp />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/verify-email" element={<VerifyEmail />} />
+            <Route path="/pricing" element={<Pricing />} />
+            <Route path="/billing" element={<ProtectedRoute><Layout><Billing /></Layout></ProtectedRoute>} />
             <Route path="/create-username" element={<ProtectedRoute><CreateUsername /></ProtectedRoute>} />
             <Route path="/personalization" element={<ProtectedRoute><Personalization /></ProtectedRoute>} />
-            <Route path="/" element={<ProtectedRoute><Layout><Home /></Layout></ProtectedRoute>} />
+            <Route path="/app" element={<ProtectedRoute><Layout><Home /></Layout></ProtectedRoute>} />
             <Route path="/coach" element={<ProtectedRoute><Layout><Coach /></Layout></ProtectedRoute>} />
             <Route path="/chat-history" element={<ProtectedRoute><Layout><ChatHistory /></Layout></ProtectedRoute>} />
             <Route path="/games" element={<ProtectedRoute><Layout><Games /></Layout></ProtectedRoute>} />
