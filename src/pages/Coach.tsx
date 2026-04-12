@@ -12,7 +12,7 @@ import { toast } from 'sonner';
 import { format } from 'date-fns';
 
 export default function Coach() {
-  const { user, profile } = useAuth();
+  const { user, profile, canUseAi, isPro, incrementAiUsage } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const sessionId = searchParams.get('session');
   const { t, i18n } = useTranslation();
@@ -145,6 +145,10 @@ export default function Coach() {
   const handleSend = async (textToSend?: string) => {
     const userMsg = textToSend || inputText;
     if (!userMsg.trim() || !user || !ai) return;
+    if (!canUseAi) {
+      toast.error('Free plan limit reached (10 AI messages/day). Upgrade to Pro for unlimited usage.');
+      return;
+    }
     setInputText('');
     
     let currentSessionId = sessionId;
@@ -207,6 +211,9 @@ export default function Coach() {
     setMessages(prev => [...prev, { id: Date.now(), role: 'user', text: userMsg }, { id: Date.now() + 1, role: 'model', text: '' }]);
 
     try {
+      if (!isPro) {
+        await incrementAiUsage();
+      }
       const needsSearch = /weather|news|current|today|now|latest|price|stock/i.test(userMsg);
       
       const stream = await ai.models.generateContentStream({

@@ -8,7 +8,7 @@ export function BottomNav() {
   const { t } = useTranslation();
   
   const navItems = [
-    { to: '/', icon: Home, label: t('nav.home') },
+    { to: '/app', icon: Home, label: t('nav.home') },
     { to: '/coach', icon: MessageSquare, label: t('nav.coach') },
     { to: '/games', icon: BrainCircuit, label: t('nav.games') },
     { to: '/analytics', icon: BarChart2, label: t('nav.analytics') },
